@@ -4,7 +4,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
-# Cron-job এর জন্য অতি হালকা রেসপন্স (যাতে output too large এরর না আসে)
+# Lightweight server for Cron-job / Keep-alive
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         body = b"OK"
@@ -25,7 +25,7 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# এনভায়রনমেন্ট ভেরিয়েবল
+# Environment Variables
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 WEBAPP_URL = os.environ.get('WEBAPP_URL', '')
 raw_channel_id = os.environ.get('CHANNEL_ID', '0')
@@ -33,16 +33,16 @@ CHANNEL_ID = int(raw_channel_id) if raw_channel_id and raw_channel_id != 'null' 
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# চ্যানেলে ভিডিও/ফাইল/ছবি দিলে সাথে সাথে লিংক তৈরি করবে
+# Generates link when video/file/photo is posted in channel
 @bot.channel_post_handler(content_types=['video', 'document', 'audio', 'photo'])
 def on_channel_post(message):
     global CHANNEL_ID
-    CHANNEL_ID = message.chat.id  # স্বয়ংক্রিয়ভাবে আসল চ্যানেল আইডি ধরে নেবে
+    CHANNEL_ID = message.chat.id
     
     msg_id = message.message_id
     me = bot.get_me()
     share_link = f"https://t.me/{me.username}?start=file_{msg_id}"
-    bot.send_message(message.chat.id, f"✅ নতুন ভিডিওর লিংক তৈরি হয়েছে:\n\n{share_link}")
+    bot.send_message(message.chat.id, f"✅ New video link generated:\n\n{share_link}")
 
 @bot.message_handler(commands=['start'])
 def on_start(message):
@@ -51,26 +51,33 @@ def on_start(message):
     if len(args) > 1:
         param = args[1]
         
-        # ইউজার এড দেখে ফেরত আসলে
+        # When user returns after watching ad
         if param.startswith("unlock_"):
             raw_id = param.replace("unlock_", "")
             if raw_id.isdigit():
                 file_id = int(raw_id)
-                bot.send_message(message.chat.id, "🎉 এড দেখা সফল হয়েছে! এই নিন আপনার ভিডিও:")
-                bot.copy_message(chat_id=message.chat.id, from_chat_id=CHANNEL_ID, message_id=file_id)
+                bot.send_message(message.chat.id, "🎉 Ad watched successfully! Here is your video:")
+                
+                # Full security: protect_content blocks download, forward & screenshot
+                bot.copy_message(
+                    chat_id=message.chat.id, 
+                    from_chat_id=CHANNEL_ID, 
+                    message_id=file_id, 
+                    protect_content=True
+                )
             else:
-                bot.send_message(message.chat.id, "⚠️ কোনো নির্দিষ্ট ভিডিও পাওয়া যায়নি। চ্যানেলের লিংক থেকে আসুন।")
+                bot.send_message(message.chat.id, "⚠️ No video found. Please use the link from the channel.")
             return
 
-        # ইউজার ভিডিও লিংকে ক্লিক করে আসলে
+        # When user clicks the video link from channel
         if param.startswith("file_"):
             file_id = param.replace("file_", "")
             markup = InlineKeyboardMarkup()
             app_url = f"{WEBAPP_URL}?file={file_id}"
-            markup.add(InlineKeyboardButton("🎬 এড দেখে ভিডিও খুলুন", web_app=WebAppInfo(url=app_url)))
-            bot.send_message(message.chat.id, "ভিডিওটি দেখতে নিচের বাটনে ক্লিক করে এডটি সম্পূর্ণ দেখুন:", reply_markup=markup)
+            markup.add(InlineKeyboardButton("🎬 Watch Ad to Unlock Video", web_app=WebAppInfo(url=app_url)))
+            bot.send_message(message.chat.id, "Click the button below and watch the full ad to unlock the video:", reply_markup=markup)
             return
 
-    bot.send_message(message.chat.id, "👋 হ্যালো! বট সম্পূর্ণ সচল আছে। চ্যানেলে ভিডিও ছাড়লে লিংক তৈরি হবে।")
+    bot.send_message(message.chat.id, "👋 Hello! You cannot watch videos directly here.\nPlease click the specific video link from our channel to unlock and watch.")
 
 bot.infinity_polling()
