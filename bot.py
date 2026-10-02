@@ -16,7 +16,7 @@ class DummyServer(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format, *args):
-        return  # অতিরিক্ত লগ বন্ধ
+        return
 
 def run_server():
     port = int(os.environ.get("PORT", 8080))
