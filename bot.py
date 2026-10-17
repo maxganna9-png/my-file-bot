@@ -31,18 +31,26 @@ WEBAPP_URL = os.environ.get('WEBAPP_URL', '')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# চ্যানেলে যেকোনো ফরম্যাটে Catbox লিংক দিলে ধরে ফেলবে
+# নির্দিষ্ট সময় পর মেসেজ মুছে ফেলার ফাংশন
+def auto_delete_messages(chat_id, message_ids, delay=150):
+    def delete_task():
+        for mid in message_ids:
+            try:
+                bot.delete_message(chat_id=chat_id, message_id=mid)
+            except Exception:
+                pass  # মেসেজ না থাকলে কোনো এরর হবে না
+    
+    # ব্যাকগ্রাউন্ডে টাইমার চালু (ডিফল্ট: ৫ মিনিট / ৩০০ সেকেন্ড)
+    threading.Timer(delay, delete_task).start()
+
+# চ্যানেলে Catbox লিংক দিলে প্লেয়ার লিংক তৈরি করবে
 @bot.channel_post_handler(content_types=['text', 'photo', 'video', 'document'])
 def on_channel_text(message):
     text = message.text or message.caption or ""
-    
-    # Catbox লিংক নিখুঁতভাবে শনাক্ত করার শক্তিশালী ফিল্টার
     match = re.search(r'catbox\.moe/([a-zA-Z0-9_-]+)', text, re.IGNORECASE)
     if match:
         raw_code = match.group(1)
-        # .mp4 বা বাড়তি অংশ মুছে শুধু কোড আলাদা করা
         video_code = re.sub(r'\.(mp4|MP4|mkv|mov)$', '', raw_code)
-        
         me = bot.get_me()
         share_link = f"https://t.me/{me.username}?start=v_{video_code}"
         bot.send_message(message.chat.id, f"✅ New Secure Player Link:\n\n{share_link}")
@@ -53,16 +61,26 @@ def on_start(message):
     if len(args) > 1:
         param = args[1]
         
+        # ইউজার ভিডিও লিংকে ক্লিক করে আসলে
         if param.startswith("v_"):
             video_code = param.replace("v_", "")
             markup = InlineKeyboardMarkup()
             app_url = f"{WEBAPP_URL}?v={video_code}"
             
             markup.add(InlineKeyboardButton("🎬 Watch Video (Protected Player)", web_app=WebAppInfo(url=app_url)))
-            bot.send_message(
+            
+            # বাটনসহ মেসেজ পাঠানো
+            sent_msg = bot.send_message(
                 message.chat.id, 
-                "Click the button below to watch the video in our secure in-app player:", 
+                "Click the button below to watch the video in our secure in-app player:\n\n⏳ (This button will disappear in 5 minutes)", 
                 reply_markup=markup
+            )
+            
+            # ঠিক ৫ মিনিট (৩০০ সেকেন্ড) পর ইউজারের /start মেসেজ এবং বটের বাটন দুটোই স্বয়ংক্রিয়ভাবে মুছে যাবে
+            auto_delete_messages(
+                chat_id=message.chat.id, 
+                message_ids=[message.message_id, sent_msg.message_id], 
+                delay=300
             )
             return
 
