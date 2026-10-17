@@ -1,10 +1,11 @@
 import os
+import re
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
-# Cron-job এর জন্য হালকা সার্ভার (Keep-alive)
+# Keep-alive সার্ভার (Render কে ২৪ ঘণ্টা সচল রাখার জন্য)
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         body = b"OK"
@@ -28,80 +29,41 @@ threading.Thread(target=run_server, daemon=True).start()
 # এনভায়রনমেন্ট ভেরিয়েবল
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 WEBAPP_URL = os.environ.get('WEBAPP_URL', '')
-raw_channel_id = os.environ.get('CHANNEL_ID', '0')
-CHANNEL_ID = int(raw_channel_id) if raw_channel_id and raw_channel_id != 'null' else 0
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ৩০ মিনিট (১৮০০ সেকেন্ড) পর মেসেজ মুছে ফেলার ফাংশন
-def auto_delete_messages(chat_id, message_ids, delay=1800):
-    def delete_task():
-        for mid in message_ids:
-            try:
-                bot.delete_message(chat_id=chat_id, message_id=mid)
-            except Exception:
-                pass  # মেসেজ না থাকলে কোনো এরর হবে না
-    
-    # ব্যাকগ্রাউন্ডে ৩০ মিনিটের টাইমার চালু
-    threading.Timer(delay, delete_task).start()
-
-# চ্যানেলে ভিডিও দিলে লিংক তৈরি করবে
-@bot.channel_post_handler(content_types=['video', 'document', 'audio', 'photo'])
-def on_channel_post(message):
-    global CHANNEL_ID
-    CHANNEL_ID = message.chat.id
-    
-    msg_id = message.message_id
-    me = bot.get_me()
-    share_link = f"https://t.me/{me.username}?start=file_{msg_id}"
-    bot.send_message(message.chat.id, f"✅ New video link generated:\n\n{share_link}")
+# চ্যানেলে Catbox লিংক দিলে সাথে সাথে প্লেয়ার লিংক তৈরি করবে
+@bot.channel_post_handler(content_types=['text'])
+def on_channel_text(message):
+    text = message.text
+    match = re.search(r'files\.catbox\.moe/([a-zA-Z0-9]+)\.mp4', text)
+    if match:
+        video_code = match.group(1)
+        me = bot.get_me()
+        share_link = f"https://t.me/{me.username}?start=v_{video_code}"
+        bot.send_message(message.chat.id, f"✅ New Secure Player Link:\n\n{share_link}")
 
 @bot.message_handler(commands=['start'])
 def on_start(message):
-    global CHANNEL_ID
     args = message.text.split()
     if len(args) > 1:
         param = args[1]
         
-        # ইউজার এড দেখে ফেরত আসলে
-        if param.startswith("unlock_"):
-            raw_id = param.replace("unlock_", "")
-            if raw_id.isdigit():
-                file_id = int(raw_id)
-                
-                # মেসেজ পাঠানো (৩০ মিনিটের নোটিশ সহ)
-                msg_text = bot.send_message(
-                    message.chat.id, 
-                    "🎉 Ad verified! Here is your video.\n\n⏳ Note: This video will be automatically deleted in 30 minutes."
-                )
-                
-                # ফুল সিকিউরিটিতে ভিডিও কপি করা (ডাউনলোড/ফরওয়ার্ড বন্ধ)
-                msg_video = bot.copy_message(
-                    chat_id=message.chat.id, 
-                    from_chat_id=CHANNEL_ID, 
-                    message_id=file_id, 
-                    protect_content=True
-                )
-                
-                # ঠিক ৩০ মিনিট (১৮০০ সেকেন্ড) পর মেসেজ ও ভিডিও ডিলিট হয়ে যাবে
-                auto_delete_messages(
-                    chat_id=message.chat.id, 
-                    message_ids=[msg_text.message_id, msg_video.message_id], 
-                    delay=1800
-                )
-            else:
-                bot.send_message(message.chat.id, "⚠️ No video found. Please use the link from the channel.")
-            return
-
-        # ইউজার ভিডিও লিংকে ক্লিক করে আসলে
-        if param.startswith("file_"):
-            file_id = param.replace("file_", "")
+        # ইউজার লিংকে ক্লিক করে আসলে
+        if param.startswith("v_"):
+            video_code = param.replace("v_", "")
             markup = InlineKeyboardMarkup()
-            app_url = f"{WEBAPP_URL}?file={file_id}"
-            markup.add(InlineKeyboardButton("🎬 Watch Ad to Unlock Video", web_app=WebAppInfo(url=app_url)))
-            bot.send_message(message.chat.id, "Click the button below and watch the full ad to unlock the video:", reply_markup=markup)
+            app_url = f"{WEBAPP_URL}?v={video_code}"
+            
+            # শুধুমাত্র ওয়েব প্লেয়ার খোলার বাটন দেবে, চ্যাটে কোনো ফাইল পাঠাবে না
+            markup.add(InlineKeyboardButton("🎬 Watch Video (Protected Player)", web_app=WebAppInfo(url=app_url)))
+            bot.send_message(
+                message.chat.id, 
+                "Click the button below to watch the video in our secure in-app player:", 
+                reply_markup=markup
+            )
             return
 
-    bot.send_message(message.chat.id, "👋 Hello! You cannot watch videos directly here.\nPlease click the specific video link from our channel to unlock and watch.")
+    bot.send_message(message.chat.id, "👋 Hello! Please open any video link from our channel to watch in our secure player.")
 
 bot.infinity_polling()
