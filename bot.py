@@ -4,7 +4,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
-# Lightweight server for Cron-job / Keep-alive
+# Cron-job এর জন্য হালকা সার্ভার (Keep-alive)
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         body = b"OK"
@@ -25,7 +25,7 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# Environment Variables
+# এনভায়রনমেন্ট ভেরিয়েবল
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 WEBAPP_URL = os.environ.get('WEBAPP_URL', '')
 raw_channel_id = os.environ.get('CHANNEL_ID', '0')
@@ -33,7 +33,19 @@ CHANNEL_ID = int(raw_channel_id) if raw_channel_id and raw_channel_id != 'null' 
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Generates link when video/file/photo is posted in channel
+# ৩০ মিনিট (১৮০০ সেকেন্ড) পর মেসেজ মুছে ফেলার ফাংশন
+def auto_delete_messages(chat_id, message_ids, delay=1800):
+    def delete_task():
+        for mid in message_ids:
+            try:
+                bot.delete_message(chat_id=chat_id, message_id=mid)
+            except Exception:
+                pass  # মেসেজ না থাকলে কোনো এরর হবে না
+    
+    # ব্যাকগ্রাউন্ডে ৩০ মিনিটের টাইমার চালু
+    threading.Timer(delay, delete_task).start()
+
+# চ্যানেলে ভিডিও দিলে লিংক তৈরি করবে
 @bot.channel_post_handler(content_types=['video', 'document', 'audio', 'photo'])
 def on_channel_post(message):
     global CHANNEL_ID
@@ -51,25 +63,37 @@ def on_start(message):
     if len(args) > 1:
         param = args[1]
         
-        # When user returns after watching ad
+        # ইউজার এড দেখে ফেরত আসলে
         if param.startswith("unlock_"):
             raw_id = param.replace("unlock_", "")
             if raw_id.isdigit():
                 file_id = int(raw_id)
-                bot.send_message(message.chat.id, "🎉 Ad watched successfully! Here is your video:")
                 
-                # Full security: protect_content blocks download, forward & screenshot
-                bot.copy_message(
+                # মেসেজ পাঠানো (৩০ মিনিটের নোটিশ সহ)
+                msg_text = bot.send_message(
+                    message.chat.id, 
+                    "🎉 Ad verified! Here is your video.\n\n⏳ Note: This video will be automatically deleted in 30 minutes."
+                )
+                
+                # ফুল সিকিউরিটিতে ভিডিও কপি করা (ডাউনলোড/ফরওয়ার্ড বন্ধ)
+                msg_video = bot.copy_message(
                     chat_id=message.chat.id, 
                     from_chat_id=CHANNEL_ID, 
                     message_id=file_id, 
                     protect_content=True
                 )
+                
+                # ঠিক ৩০ মিনিট (১৮০০ সেকেন্ড) পর মেসেজ ও ভিডিও ডিলিট হয়ে যাবে
+                auto_delete_messages(
+                    chat_id=message.chat.id, 
+                    message_ids=[msg_text.message_id, msg_video.message_id], 
+                    delay=1800
+                )
             else:
                 bot.send_message(message.chat.id, "⚠️ No video found. Please use the link from the channel.")
             return
 
-        # When user clicks the video link from channel
+        # ইউজার ভিডিও লিংকে ক্লিক করে আসলে
         if param.startswith("file_"):
             file_id = param.replace("file_", "")
             markup = InlineKeyboardMarkup()
