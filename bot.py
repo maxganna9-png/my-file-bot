@@ -26,19 +26,23 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# এনভায়রনমেন্ট ভেরিয়েবল
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 WEBAPP_URL = os.environ.get('WEBAPP_URL', '')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# চ্যানেলে Catbox লিংক দিলে সাথে সাথে প্লেয়ার লিংক তৈরি করবে
-@bot.channel_post_handler(content_types=['text'])
+# চ্যানেলে যেকোনো ফরম্যাটে Catbox লিংক দিলে ধরে ফেলবে
+@bot.channel_post_handler(content_types=['text', 'photo', 'video', 'document'])
 def on_channel_text(message):
-    text = message.text
-    match = re.search(r'files\.catbox\.moe/([a-zA-Z0-9]+)\.mp4', text)
+    text = message.text or message.caption or ""
+    
+    # Catbox লিংক নিখুঁতভাবে শনাক্ত করার শক্তিশালী ফিল্টার
+    match = re.search(r'catbox\.moe/([a-zA-Z0-9_-]+)', text, re.IGNORECASE)
     if match:
-        video_code = match.group(1)
+        raw_code = match.group(1)
+        # .mp4 বা বাড়তি অংশ মুছে শুধু কোড আলাদা করা
+        video_code = re.sub(r'\.(mp4|MP4|mkv|mov)$', '', raw_code)
+        
         me = bot.get_me()
         share_link = f"https://t.me/{me.username}?start=v_{video_code}"
         bot.send_message(message.chat.id, f"✅ New Secure Player Link:\n\n{share_link}")
@@ -49,13 +53,11 @@ def on_start(message):
     if len(args) > 1:
         param = args[1]
         
-        # ইউজার লিংকে ক্লিক করে আসলে
         if param.startswith("v_"):
             video_code = param.replace("v_", "")
             markup = InlineKeyboardMarkup()
             app_url = f"{WEBAPP_URL}?v={video_code}"
             
-            # শুধুমাত্র ওয়েব প্লেয়ার খোলার বাটন দেবে, চ্যাটে কোনো ফাইল পাঠাবে না
             markup.add(InlineKeyboardButton("🎬 Watch Video (Protected Player)", web_app=WebAppInfo(url=app_url)))
             bot.send_message(
                 message.chat.id, 
